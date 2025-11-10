@@ -14,7 +14,7 @@ module.exports = {
   // Solidity编译器配置
   solidity: {
     // 指定Solidity版本
-    version: "0.8.28",
+    version: "0.8.24",
     settings: {
       optimizer: {
         enabled: true,
