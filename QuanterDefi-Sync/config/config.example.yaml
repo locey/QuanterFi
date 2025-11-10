@@ -1,0 +1,48 @@
+daemon_interval_seconds: 10
+network:
+  port: 8080
+  mode: debug  # debug, release, test
+
+database:
+  host: localhost
+  port: 5432
+  user: postgres
+  password: your_password
+  dbname: quanterdefi_sync
+  sslmode: disable
+  max_open_conns: 25
+  max_idle_conns: 5
+  conn_max_lifetime: 5m
+
+redis:
+  host: localhost
+  port: 6379
+  password: ""
+  db: 0
+  pool_size: 10
+  min_idle_conns: 5
+
+monitoring:
+  enabled: true
+  metrics_port: 9090
+  alert_webhook: ""
+
+logging:
+  level: info  # debug, info, warn, error
+  format: json  # json, text
+  output: stdout  # stdout, file
+  file_path: logs/app.log
+
+chains:
+  - chain_id: "1"
+    chain_name: "Ethereum Mainnet"
+    rpc_url: "https://mainnet.infura.io/v3/YOUR_PROJECT_ID"
+    ws_url: "wss://mainnet.infura.io/ws/v3/YOUR_PROJECT_ID"
+    start_block: 0
+    is_active: true
+  - chain_id: "56"
+    chain_name: "BSC Mainnet"
+    rpc_url: "https://bsc-dataseed.binance.org/"
+    ws_url: ""
+    start_block: 0
+    is_active: false
