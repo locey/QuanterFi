@@ -1,17 +1,17 @@
-// 导入Hardhat工具箱，包含常用的插件和工具
 require("@nomicfoundation/hardhat-toolbox");
-// 导入hardhat-deploy插件，用于管理部署脚本
-require("hardhat-deploy");
-// 导入hardhat-gas-reporter插件，用于生成Gas消耗报告
-require("hardhat-gas-reporter");
-// 导入@openzeppelin/hardhat-upgrades插件，用于可升级合约
-require("@openzeppelin/hardhat-upgrades");
-// 导入dotenv/config，用于加载环境变量
-require("dotenv/config");
+require("dotenv").config();
+
+// 获取环境变量
+const PRIVATE_KEY = process.env.PRIVATE_KEY || "0x0000000000000000000000000000000000000000000000000000000000000000";
+const MAINNET_URL = process.env.MAINNET_URL || "";
+const POLYGON_URL = process.env.POLYGON_URL || "";
+const ARBITRUM_URL = process.env.ARBITRUM_URL || "";
+const ETHERSCAN_API_KEY = process.env.ETHERSCAN_API_KEY || "";
+const POLYGONSCAN_API_KEY = process.env.POLYGONSCAN_API_KEY || "";
+const ARBISCAN_API_KEY = process.env.ARBISCAN_API_KEY || "";
 
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
-  // Solidity编译器配置
   solidity: {
     // 指定Solidity版本
     version: "0.8.24",
@@ -20,64 +20,122 @@ module.exports = {
         enabled: true,
         runs: 200,
       },
-      viaIR: true,
+      viaIR: true, // 启用IR优化器，减少gas消耗
     },
-    // 元数据配置
-    metadata: {
-      // 不在字节码中包含元数据哈希，减小合约大小
-      bytecodeHash: "none",
+  },
+  
+  networks: {
+    // 本地网络
+    localhost: {
+      url: "http://127.0.0.1:8545",
+      chainId: 31337,
+    },
+    
+    // Ethereum主网
+    mainnet: {
+      url: MAINNET_URL,
+      accounts: PRIVATE_KEY !== "0x0000000000000000000000000000000000000000000000000000000000000000" ? [PRIVATE_KEY] : [],
+      chainId: 1,
+      gasPrice: "auto",
+    },
+    
+    // Ethereum测试网
+    sepolia: {
+      url: "https://rpc.sepolia.org",
+      accounts: PRIVATE_KEY !== "0x0000000000000000000000000000000000000000000000000000000000000000" ? [PRIVATE_KEY] : [],
+      chainId: 11155111,
+      gasPrice: "auto",
+    },
+    
+    // Polygon主网
+    polygon: {
+      url: POLYGON_URL,
+      accounts: PRIVATE_KEY !== "0x0000000000000000000000000000000000000000000000000000000000000000" ? [PRIVATE_KEY] : [],
+      chainId: 137,
+      gasPrice: "auto",
+    },
+    
+    // Polygon测试网
+    mumbai: {
+      url: "https://rpc-mumbai.maticvigil.com",
+      accounts: PRIVATE_KEY !== "0x0000000000000000000000000000000000000000000000000000000000000000" ? [PRIVATE_KEY] : [],
+      chainId: 80001,
+      gasPrice: "auto",
+    },
+    
+    // Arbitrum主网
+    arbitrum: {
+      url: ARBITRUM_URL,
+      accounts: PRIVATE_KEY !== "0x0000000000000000000000000000000000000000000000000000000000000000" ? [PRIVATE_KEY] : [],
+      chainId: 42161,
+      gasPrice: "auto",
+    },
+    
+    // Arbitrum测试网
+    arbitrumGoerli: {
+      url: "https://goerli-rollup.arbitrum.io/rpc",
+      accounts: PRIVATE_KEY !== "0x0000000000000000000000000000000000000000000000000000000000000000" ? [PRIVATE_KEY] : [],
+      chainId: 421613,
+      gasPrice: "auto",
+    },
+    
+    // BSC主网（可选）
+    bsc: {
+      url: "https://bsc-dataseed.binance.org/",
+      accounts: PRIVATE_KEY !== "0x0000000000000000000000000000000000000000000000000000000000000000" ? [PRIVATE_KEY] : [],
+      chainId: 56,
+      gasPrice: "auto",
+    },
+    
+    // BSC测试网（可选）
+    bscTestnet: {
+      url: "https://data-seed-prebsc-1-s1.binance.org:8545/",
+      accounts: PRIVATE_KEY !== "0x0000000000000000000000000000000000000000000000000000000000000000" ? [PRIVATE_KEY] : [],
+      chainId: 97,
+      gasPrice: "auto",
+    },
+  },
+  
+  // Etherscan验证配置
+  etherscan: {
+    apiKey: {
+      mainnet: ETHERSCAN_API_KEY,
+      sepolia: ETHERSCAN_API_KEY,
+      polygon: POLYGONSCAN_API_KEY,
+      polygonMumbai: POLYGONSCAN_API_KEY,
+      arbitrumOne: ARBISCAN_API_KEY,
+      arbitrumGoerli: ARBISCAN_API_KEY,
+      bsc: "", // BSC不需要API key验证
+      bscTestnet: "", // BSC测试网不需要API key验证
     },
   },
   
   // Gas报告配置
   gasReporter: {
-    // 启用Gas报告
-    enabled: true,
-    // 报告使用的货币单位
+    enabled: process.env.REPORT_GAS !== undefined,
     currency: "USD",
-    // Gas价格(单位：Gwei)
     gasPrice: 21,
-    // Coinmarketcap API密钥，用于获取实时价格
-    //coinmarketcap: process.env.COINMARKETCAP_API_KEY,
+    coinmarketcap: process.env.COINMARKETCAP_API_KEY || "",
   },
   
-  // 命名账户配置
-  namedAccounts: {
-    // 部署者账户
-    deployer: {
-      // 默认使用第一个账户作为部署者
-      default: 0,
-    },
+  // 合约大小优化
+  contractSizer: {
+    alphaSort: true,
+    disambiguatePaths: false,
+    runOnCompile: true,
+    strict: true,
+  },
+  
+  // 测试配置
+  mocha: {
+    timeout: 100000,
   },
   
   // 路径配置
   paths: {
-    // 合约源代码路径
     sources: "./src",
-    // 测试文件路径
     tests: "./test",
-    // 缓存文件路径
     cache: "./cache",
-    // 编译产物路径
     artifacts: "./artifacts",
-    // 部署脚本路径
-    deploy: "./deploy",
-  },
-  
-  // 网络配置
-  networks: {
-    // Sepolia测试网配置
-    sepolia: {
-      // 网络URL，使用Infura API
-      url: `https://eth-sepolia.infura.io/v3/${process.env.INFURA_API_KEY}`,
-      // 账户配置，从环境变量获取私钥
-      accounts: process.env.PRIVATE_KEY !== undefined ? [process.env.PRIVATE_KEY] : [],
-    },
-  },
-  
-  // Etherscan配置，用于合约验证
-  etherscan: {
-    // Etherscan API密钥
-    apiKey: process.env.ETHERSCAN_API_KEY,
   },
 };

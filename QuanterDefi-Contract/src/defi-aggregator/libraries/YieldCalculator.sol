@@ -229,4 +229,8 @@ library YieldCalculator {
         
         if (compoundAmount > simpleAmount) {
             return compoundAmount - simpleAmount;
-       
+        } else {
+            return 0;
+        }
+    }
+}
