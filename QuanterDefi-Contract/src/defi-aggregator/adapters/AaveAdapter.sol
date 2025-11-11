@@ -4,8 +4,31 @@ pragma solidity 0.8.24;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "../interfaces/IProtocolAdapter.sol";
+
+// AAVE池合约接口（简化版本，顶层声明）
+interface IPool {
+    function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode) external;
+    function withdraw(address asset, uint256 amount, address to) external returns (uint256);
+    function getReserveData(address asset) external view returns (ReserveData memory);
+}
+
+// AAVE aToken接口（顶层声明）
+interface IAToken {
+    function balanceOf(address user) external view returns (uint256);
+    function scaledBalanceOf(address user) external view returns (uint256);
+}
+
+// AAVE储备数据结构（顶层声明）
+struct ReserveData {
+    uint256 liquidityIndex;
+    uint256 currentLiquidityRate;
+    uint40 lastUpdateTimestamp;
+    address aTokenAddress;
+    address stableDebtTokenAddress;
+    address variableDebtTokenAddress;
+}
 
 /**
  * @title AaveAdapter
@@ -13,28 +36,6 @@ import "../interfaces/IProtocolAdapter.sol";
  */
 contract AaveAdapter is IProtocolAdapter, Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
-    
-    // AAVE池合约接口（简化版本）
-    interface IPool {
-        function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode) external;
-        function withdraw(address asset, uint256 amount, address to) external returns (uint256);
-        function getReserveData(address asset) external view returns (ReserveData memory);
-    }
-    
-    // AAVE aToken接口
-    interface IAToken {
-        function balanceOf(address user) external view returns (uint256);
-        function scaledBalanceOf(address user) external view returns (uint256);
-    }
-    
-    struct ReserveData {
-        uint256 liquidityIndex;
-        uint256 currentLiquidityRate;
-        uint40 lastUpdateTimestamp;
-        address aTokenAddress;
-        address stableDebtTokenAddress;
-        address variableDebtTokenAddress;
-    }
     
     // 状态变量
     IPool public aavePool;
@@ -59,7 +60,7 @@ contract AaveAdapter is IProtocolAdapter, Ownable, ReentrancyGuard {
      * @dev 构造函数
      * @param _aavePool AAVE池合约地址
      */
-    constructor(address _aavePool) {
+    constructor(address _aavePool) Ownable(msg.sender) {
         require(_aavePool != address(0), "Invalid AAVE pool address");
         aavePool = IPool(_aavePool);
     }
@@ -76,8 +77,8 @@ contract AaveAdapter is IProtocolAdapter, Ownable, ReentrancyGuard {
         // 从用户转账代币到本合约
         IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
         
-        // 授权AAVE池使用代币
-        IERC20(token).safeApprove(address(aavePool), amount);
+        // 授权AAVE池使用代币（OpenZeppelin v5 使用 forceApprove 以避免非零到非零的 approve 限制）
+        IERC20(token).forceApprove(address(aavePool), amount);
         
         // 存入到AAVE
         uint256 balanceBefore = IAToken(tokenToAToken[token]).balanceOf(address(this));

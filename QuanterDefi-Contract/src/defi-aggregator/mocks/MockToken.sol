@@ -21,7 +21,7 @@ contract MockToken is ERC20, Ownable {
         string memory name,
         string memory symbol,
         uint8 decimalsParam
-    ) ERC20(name, symbol) {
+    ) ERC20(name, symbol) Ownable(msg.sender) {
         _decimals = decimalsParam;
         
         // 铸造初始供应量（100万代币）
@@ -72,18 +72,18 @@ contract MockToken is ERC20, Ownable {
     
     /**
      * @dev 获取代币信息
-     * @return name 代币名称
-     * @return symbol 代币符号
-     * @return decimals 小数位数
-     * @return totalSupply 总供应量
-     * @return balanceOf 调用者余额
+     * @return name_ 代币名称
+     * @return symbol_ 代币符号
+     * @return decimals_ 小数位数
+     * @return totalSupply_ 总供应量
+     * @return balance_ 调用者余额
      */
     function getTokenInfo() external view returns (
-        string memory name,
-        string memory symbol,
-        uint8 decimals,
-        uint256 totalSupply,
-        uint256 balance
+        string memory name_,
+        string memory symbol_,
+        uint8 decimals_,
+        uint256 totalSupply_,
+        uint256 balance_
     ) {
         return (
             name(),

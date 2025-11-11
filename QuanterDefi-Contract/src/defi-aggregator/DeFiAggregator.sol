@@ -4,8 +4,8 @@ pragma solidity 0.8.24;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/security/Pausable.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
 import "./interfaces/IDeFiAggregator.sol";
 import "./interfaces/IProtocolAdapter.sol";
 
@@ -36,7 +36,7 @@ contract DeFiAggregator is IDeFiAggregator, Ownable, ReentrancyGuard, Pausable {
      * @dev 构造函数
      * @param _feeCollector 手续费收集地址
      */
-    constructor(address _feeCollector) {
+    constructor(address _feeCollector) Ownable(msg.sender) {
         require(_feeCollector != address(0), "Invalid fee collector");
         feeCollector = _feeCollector;
     }
@@ -62,7 +62,7 @@ contract DeFiAggregator is IDeFiAggregator, Ownable, ReentrancyGuard, Pausable {
         IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
         
         // 授权适配器使用代币
-        IERC20(token).safeApprove(protocolInfos[protocol].adapter, amount);
+        IERC20(token).forceApprove(protocolInfos[protocol].adapter, amount);
         
         // 通过适配器存入协议
         uint256 actualAmount = adapter.deposit(token, amount);
