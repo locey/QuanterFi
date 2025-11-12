@@ -10,14 +10,18 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/U
 import {AccessControlEnumerableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlEnumerableUpgradeable.sol";
 import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import {ERC20PermitUpgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20PermitUpgradeable.sol";
+import {ERC20Upgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 import {IERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
 
 import {ErrorsLib} from "./libraries/ErrorsLib.sol";
 import {EventsLib} from "./libraries/EventsLib.sol";
-import {IStrategyVault,UserAsset, UserInvestment,InvestmentTarget, TradeDetail, Strategy,UnlockRequest} from "./interfaces/IStrategyVault.sol";
+import {ConstantsLib} from "./libraries/ConstantsLib.sol";
+import {StrategyLib} from "./libraries/StrategyLib.sol";
+import {InvestmentId,PositionDirection,TradeType,TradeDetail,IStrategyVault,UserAsset, UserPosition,InvestmentTarget,UnlockInvestment,SharesUnlockRequest} from "./interfaces/IStrategyVault.sol";
 
 contract StrategyVault is
     Initializable,
+    ERC20Upgradeable,
     ERC20PermitUpgradeable,
     AccessControlEnumerableUpgradeable,
     ReentrancyGuardUpgradeable,
@@ -25,32 +29,36 @@ contract StrategyVault is
     IStrategyVault {
 
     using SafeERC20 for IERC20;
-    // 手续费分母
-    uint256 public constant FEE_BASE = 10000;
-    // 解锁资产锁定期
-    uint256 public UNLOCK_LOCK_PERIOD = 7 days;
-    // 解锁份额requstId ， 从1开    始，避免零值开始，节省gas
-    uint256 public nextUnlockRequestId = 1;
 
-    uint256 public firstRequestId = 1;
+    /** immutable */
+    uint256 public immutable FEE_BASE = ConstantsLib.FEE_BASE;
+    uint256 public immutable UNLOCK_LOCK_PERIOD;
 
+    /** storage */
+    string public strategySymbol;
+    address public underlyingAsset;
+    address public feeReceiver;
+    uint256 public feeRate;
+    uint256 public startTime;
+    uint256 public endTime;
+    uint256 public tvl;
 
-    //底层资产
-    IERC20 public underlyingAsset;
-    // 策略
-    Strategy public strategy;
+    /// @dev InvestmentTargets
+    mapping(InvestmentId => InvestmentTarget) public investmentTargets;
 
     // User Assets
-    mapping(address => UserAsset) public totalAssets; // 用户存入总资产
+    mapping(address => UserAsset) public userAssets;
     
-    //User Trade Details
-    mapping (address => TradeDetail) public tradeDetails;
+    /// @dev userPosition 聚合头寸，每次投资做更新
+    mapping(address=>mapping(InvestmentId=>UserPosition)) public userPositions;
     
-    // user strategy invenstment
-    mapping(address => mapping(uint256 => UserInvestment)) public userInvestments;
-
+    // mapping(address => TradeDetail) public tradeDetails;
+    
     // user unlock requests
-    mapping(uint256 => UnlockRequest) public unlockRequests;
+    mapping(uint256 => SharesUnlockRequest) public unlockRequests;
+    /// @dev shares unlock requestId
+    uint256 public nextUnlockRequestId = 1;
+    uint256 public firstRequestId = 1;
 
     /// Roles
     bytes32 public constant MANAGER = keccak256("MANAGER"); // 管理员
@@ -58,26 +66,25 @@ contract StrategyVault is
     bytes32 public constant ALLOCATOR = keccak256("ALLOCATOR"); // 分配者
     bytes32 public constant BOT = keccak256("BOT"); // 机器人
 
-    /* Constructor */
-    constructor() {
+    /** constructor */
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor(uint256 _unlockLockPeriod) {
+        if(_unlockLockPeriod>ConstantsLib.MAX_REQUEST_LOCK_TIME || _unlockLockPeriod<ConstantsLib.MIN_REQUEST_LOCK_TIME)
+            revert ErrorsLib.InvalidUnlockLockPeriod();
         _disableInitializers();
+        UNLOCK_LOCK_PERIOD = _unlockLockPeriod;
     }
 
     function initialize(
         address admin,
         address manager,
-        address _asset,
         string memory _name,
         string memory _symbol,
-        uint256 _strategyId,
-        string memory _strategyName,
-        InvestmentTarget[] memory _targets,
-        uint256 _endTime,
-        uint256 _performanceFeeRate
+        string memory _strategySymbol,
+        address _underlyingAsset,
+        uint256 _endTime
     ) public initializer {
-        if (admin == address(0)) revert ErrorsLib.ZeroAddress();
-        if (manager == address(0)) revert ErrorsLib.ZeroAddress();
-
+        __ERC20_init(_name, _symbol);
         __ERC20Permit_init(_name);
         __AccessControlEnumerable_init();
         __ReentrancyGuard_init();
@@ -87,82 +94,48 @@ contract StrategyVault is
         _grantRole(MANAGER, manager);
 
         _strategy_init(
-            _asset,
-            _strategyId,
-            _strategyName,
-            _targets,
-            _endTime,
-            _performanceFeeRate
+            _strategySymbol,
+            _underlyingAsset,
+            _endTime
         );
     }
 
     function _strategy_init(
-        address _asset,
-        uint256 _strategyId,
-        string memory _strategyName,
-        InvestmentTarget[] memory _targets,
-        uint256 _endTime,
-        uint256 _performanceFeeRate
+        string memory _strategySymbol,
+        address _underlyingAsset,
+        uint256 _endTime
     ) private {
-        underlyingAsset = IERC20(_asset);
-        strategy = Strategy ({
-            Id: _strategyId,
-            StrategyVaultAddress: address(this),
-            name: _strategyName,
-            targets: _targets,
-            apy: 0,
-            tvl: 0,
-            startTime: block.timestamp,
-            endTime: _endTime,
-            underlyingAsset: IERC20(_asset),
-            performanceFeeRate: _performanceFeeRate
-        });
-        
+        underlyingAsset = _underlyingAsset;
+        endTime = _endTime;
+        strategySymbol = _strategySymbol;
     }
-    /**
-     * @dev 用户资产存入
-     * @param asset 存入资产类型
-     * @param amount 存入资产数量
-     */
-    function deposit(uint256 strategyId, IERC20 asset, uint256 amount) public nonReentrant {
-        if (address(asset) != address(underlyingAsset)) revert ErrorsLib.InvalidAsset();
+
+    /** user operations */
+    /// @inheritdoc IStrategyVault
+    function deposit(uint256 amount) external nonReentrant {
         if (amount == 0) revert ErrorsLib.ZeroAmount();
-        if (asset.allowance(msg.sender, address(this)) < amount) revert ErrorsLib.NotEnoughAllowance();
+        if (_underlyingToken().allowance(msg.sender, address(this)) < amount) revert ErrorsLib.NotEnoughAllowance();
 
-        // 更新用户资产和策略总锁仓金额
-        totalAssets[msg.sender].strategyId = strategyId;
-        totalAssets[msg.sender].totalAmount += amount;
-        strategy.tvl += amount;
+        userAssets[msg.sender].totalAmount += amount;
+        tvl += amount;
 
-        emit EventsLib.Deposit(msg.sender,strategyId, address(asset), amount);
+        emit EventsLib.Deposit(msg.sender, underlyingAsset, amount);
 
-        // 资产转入本合约
-        asset.safeTransferFrom(msg.sender, address(this), amount);
+        _underlyingToken().safeTransferFrom(msg.sender, address(this), amount);
     }
 
-    /**
-     * @dev 支持Permit的存款函数
-     * @param asset 存入资产类型
-     * @param amount 存入资产数量
-     * @param deadline 签名有效期
-     * @param v 签名参数
-     * @param r 签名参数
-     * @param s 签名参数
-     */
+    /// @inheritdoc IStrategyVault
     function depositWithPermit(
-        uint256 strategyId,
-        IERC20 asset,
         uint256 amount,
         uint256 deadline,
         uint8 v,
         bytes32 r,
         bytes32 s
     ) public nonReentrant {
-        if (address(asset) != address(underlyingAsset)) revert ErrorsLib.InvalidAsset();
         if (amount == 0) revert ErrorsLib.ZeroAmount();
 
         // 尝试使用permit功能
-        try IERC20Permit(address(asset)).permit(
+        try IERC20Permit(underlyingAsset).permit(
             msg.sender,
             address(this),
             amount,
@@ -176,144 +149,182 @@ contract StrategyVault is
             revert ErrorsLib.IERC20PermitError("IERC20PermitFailed");
         }
 
-        // 更新用户资产和策略总锁仓金额
-        totalAssets[msg.sender].strategyId = strategyId;
-        totalAssets[msg.sender].totalAmount += amount;
-        strategy.tvl += amount;
+        userAssets[msg.sender].totalAmount += amount;
+        tvl += amount;
 
-        emit EventsLib.Deposit(msg.sender, strategyId, address(asset), amount);
+        emit EventsLib.Deposit(msg.sender, underlyingAsset, amount);
 
-        // 资产转入本合约
-        asset.safeTransferFrom(msg.sender, address(this), amount);
+        _underlyingToken().safeTransferFrom(msg.sender, address(this), amount);
     }
 
-    /**
-     * @dev 用户申请解锁策略份额
-     * @param strategyId 申请解锁的策略ID
-     * @param shares 申请解锁的策略份额
-     */
-    function requestUnlock(uint256 strategyId,uint256 shares) public nonReentrant {
-        if (shares == 0) revert ErrorsLib.ZeroShares();
-        UserInvestment storage userInvestment = userInvestments[msg.sender][strategyId];
-        uint256 avaibleRequestShares = userInvestment.holdShares - userInvestment.requestUnholdShares;
-        if (avaibleRequestShares < shares) revert ErrorsLib.NotEnoughRequestUnShares();
-
-        userInvestment.requestUnholdShares += shares;
-        // 创建解锁请求
-        unlockRequests[nextUnlockRequestId] = UnlockRequest({
-            Id: nextUnlockRequestId,
-            user: msg.sender,
-            shares: shares,
-            strategyId: strategyId,
-            requestTime: block.timestamp,
-            processed: false
-        });
-
-        emit EventsLib.UnlockSharesRequest(msg.sender, strategyId , shares, block.timestamp);
-        
-        nextUnlockRequestId++;
+    function getUserAssets() external view returns (UserAsset memory){
+        return userAssets[msg.sender];
     }
 
-    /**
-     * @dev 查询用户资产基本信息
-     */
-    function getUserAsset() external view returns (UserAsset memory) {
-        return totalAssets[msg.sender];
+    function getUserPosition(string memory _strategySymbol) external view returns (UserPosition memory){
+        InvestmentId investmentTargetId = InvestmentId.wrap(StrategyLib.hashInvestment("HyperLiquid", _strategySymbol));
+        return userPositions[msg.sender][investmentTargetId];
     }
 
-    /**
-     * @dev 用户提取已解锁资产
-     * @param amount 提取的资产数量
-     */
-    function withdraw(uint256 strategyId,uint256 amount) public nonReentrant {
+    function unlockInvestmentShares(UnlockInvestment[] memory unlockInvestments) external nonReentrant {
+        // 遍历unlockInvestments
+        for (uint256 i = 0; i < unlockInvestments.length; i++) {
+            UnlockInvestment memory unlockInvestment = unlockInvestments[i];
+            InvestmentId targetId = unlockInvestment.targetId;
+            uint256 unlockShares = unlockInvestment.unlockShares;
+            if (unlockShares == 0) continue;
+
+            // UserAsset storage userAsset = userAssets[msg.sender];
+            UserPosition storage userPosition = userPositions[msg.sender][targetId];
+            if (userPosition.holdShares < userPosition.requestUnholdShares+unlockShares) {
+                emit EventsLib.NotEnoughSharesToUnlock(msg.sender, targetId, userPosition.holdShares, block.timestamp);
+                continue;
+            }
+            // 创建解锁请求
+            unlockRequests[nextUnlockRequestId] = SharesUnlockRequest({
+                targetId: targetId,
+                user: msg.sender,
+                shares: unlockShares,
+                requestTime: block.timestamp,
+                processed: false
+            });
+
+            emit EventsLib.UnlockSharesRequest(msg.sender, targetId , unlockShares, block.timestamp);
+            
+            nextUnlockRequestId++;
+            userPosition.requestUnholdShares+=unlockShares;
+        }
+    }
+
+    function withdraw(uint256 amount) external nonReentrant {
         if (amount == 0) revert ErrorsLib.ZeroAmount();
-        UserAsset storage userAsset = totalAssets[msg.sender];
-        if (userAsset.strategyId != strategyId) revert ErrorsLib.InvalidStrategyId();
-        if (userAsset.unlockedAmount - userAsset.withdrawedAmount < amount) revert ErrorsLib.NotEnoughWithdrawableAssets();
+        UserAsset storage userAsset = userAssets[msg.sender];
+        if (userAsset.unlockedAmount < amount + userAsset.withdrawedAmount) revert ErrorsLib.NotEnoughWithdrawableAssets();
 
-        // 更新用户已提取的资产
+        // update withdrawedAmount
         userAsset.withdrawedAmount += amount;
 
-        emit EventsLib.Withdraw(msg.sender, strategyId, address(underlyingAsset), amount);
+        emit EventsLib.Withdraw(msg.sender, underlyingAsset, amount);
         
-        // 转移资产给用户
-        underlyingAsset.safeTransfer(msg.sender, amount);
+        // transfer asset to user
+        _underlyingToken().safeTransfer(msg.sender, amount);
     }
 
-    /**
-     * @dev 管理员提取策略中资产（用于链下交易）
-     * @param asset 资产类型
-     * @param amount 提取数量
-     */
-    function adminWithdraw(uint256 strategyId,IERC20 asset, uint256 amount) public nonReentrant onlyRole(MANAGER) {
-        if (address(asset) != address(underlyingAsset)) revert ErrorsLib.InvalidAsset();
+    /** admin functions */
+    function adminWithdraw(address user,uint256 amount) external nonReentrant onlyRole(MANAGER) {
         if (amount == 0) revert ErrorsLib.ZeroAmount();
-        // if (asset.balanceOf(address(this)) < amount) revert ErrorsLib.InsufficientContractBalance();
-        // TODO: 计算策略中提取资产比例，
-        // 更新用户锁定资产 计算用户未锁定资产占比，和总资产中提取比例相同。
-
-        // emit EventsLib.AdminWithdraw(msg.sender, strategyId,address(asset), amount);
+        if (_underlyingToken().balanceOf(address(this)) < amount) revert ErrorsLib.InsufficientContractBalance();
+        UserAsset storage userAsset = userAssets[user];
+        if(userAsset.totalAmount < amount+userAsset.lockedAmount) revert ErrorsLib.NotEnoughWithdrawableAssets();
         
-        // 转移资产给管理员
-        asset.safeTransfer(msg.sender, amount);
+        userAsset.lockedAmount+=amount;
+
+        emit EventsLib.AdminWithdraw(msg.sender, underlyingAsset, amount);
+        // transfer asset to admin
+        _underlyingToken().safeTransfer(msg.sender, amount);
     }
 
-    /**
-     * @dev 设置交易详情
-     * @param tradeDetails_ 交易详情数组
-     */
-    function setTradeDetails(TradeDetail[] memory tradeDetails_) public onlyRole(MANAGER) {
-        // for (uint256 i = 0; i < tradeDetails_.length; i++) {
-        //     TradeDetail storage detail = tradeDetails_[i];
-        //     if (detail.Id == 0) revert ErrorsLib.InvalidTradeId();
-            
-        //     // 更新交易详情
-        //     tradeDetails[detail.user] = detail;
-        // }
+    ///@inheritdoc IStrategyVault
+    /// @dev 交易后，计算是否盈利，手续费，更新用户头寸，更新用户总资产，更新策略tvl，更新用户请求
+    function updateUserPositionAndAssets(TradeDetail[] memory tradeDetails) external nonReentrant onlyRole(MANAGER) {
+        // 遍历tradeDetails
+        for (uint256 i = 0; i < tradeDetails.length; i++) { 
+            TradeDetail memory tradeDetail = tradeDetails[i];
+            UserPosition storage userPosition = userPositions[tradeDetail.user][tradeDetail.targetId];
+            UserAsset storage userAsset = userAssets[tradeDetail.user];
+            // 计算利润
+            (int256 profit, uint256 fee,) = calcProfit(userPosition, tradeDetail);
+            if (profit > 0) {
+                // 更新用户资产
+                userAsset.totalAmount += uint256(profit);
+                userAsset.unlockedAmount += uint256(profit);
+            }
+            userPosition.entryPrice = (
+                userPosition.entryPrice * userPosition.holdShares + tradeDetail.tradePrice * tradeDetail.totalShares
+            ) / (userPosition.holdShares + tradeDetail.totalShares);
+            userPosition.holdShares += tradeDetail.totalShares;
+            userAsset.totalAmount += fee;
+            userAsset.unlockedAmount += fee;
 
-        // emit EventsLib.TradeDetailsSet(tradeDetails_);
+
+        }
+    }
+    
+    function calcProfit(
+        UserPosition memory position,
+        TradeDetail memory trade
+    ) internal view returns (int256 profit, uint256 fee, int256 netProfit) {
+        // 做多或做空判断
+        if (position.direction == PositionDirection.LONG) {
+            if (trade.tradeType == TradeType.WITHDRAW) {
+                // 卖出时计算盈利
+                profit = int256(trade.tradePrice) - int256(position.entryPrice);
+                profit = profit * int256(trade.totalShares) / 1e18;
+            } else {
+                profit = 0; // 买入不计算
+            }
+        } else if (position.direction == PositionDirection.SHORT) {
+            if (trade.tradeType == TradeType.WITHDRAW) {
+                // 买入平仓时计算盈利
+                profit = int256(position.entryPrice) - int256(trade.tradePrice);
+                profit = profit * int256(trade.totalShares) / 1e18;
+            } else {
+                profit = 0; // 开仓时不计算
+            }
+        }
+        // 如果盈利，计算手续费
+        if (profit > 0) {
+            fee = uint256(profit) * feeRate / FEE_BASE;
+            netProfit = profit - int256(fee);
+        } else {
+            fee = 0;
+            netProfit = profit;
+        }
     }
 
-    /**
-     * @dev 处理用户发起的解锁请求
-     * @param requestId 解锁请求ID
-     * @param asset 资产类型
-     * @param amount 资产数量
-     */
-    function processUnlockRequest(uint256 requestId, IERC20 asset, uint256 amount) public nonReentrant onlyRole(MANAGER) {
-        // UnlockRequest storage request = unlockRequests[requestId];
-        
-        // if (requestId == 0 || requestId >= unlockRequestId) revert ErrorsLib.InvalidRequestId();
-        // if (request.processed) revert ErrorsLib.RequestAlreadyProcessed();
-        // if (block.timestamp < request.requestTime + UNLOCK_LOCK_PERIOD) revert ErrorsLib.LockPeriodNotExpired();
-        
-        // // 更新请求状态
-        // request.processed = true;
-        
-        // // 更新用户资产
-        // totalAssets[request.user].lockedAmount -= request.amount;
-        // totalAssets[request.user].unlockedAmount += amount;
 
-        // emit EventsLib.UnlockProcessed(request.user, requestId, amount);
+    /** admin only */
+    function setFeeRate(uint256 newFee) external onlyRole(MANAGER){
+        if (feeRate == newFee) revert ErrorsLib.FeeAlareadySet();
+        if (newFee > ConstantsLib.MAX_FEE_RATE) revert ErrorsLib.InvalidFeeRate();
+        if (newFee != 0 && feeReceiver == address(0)) revert ErrorsLib.ZeroFeeReceiver();
+
+        feeRate = newFee;
+
+        emit EventsLib.FeeRateSet(msg.sender,newFee);
     }
 
-    /**
-     * @dev 查询策略信息
-     */
-    function getStrategyInfo() external view returns (Strategy memory) {
-        return strategy;
+    function setFeeReceiver(address newReceiver) external onlyRole(MANAGER){
+        if (feeReceiver == newReceiver) revert ErrorsLib.FeeReceiverAlreadySet();
+        if (newReceiver == address(0) && feeRate != 0) revert ErrorsLib.ZeroFeeReceiver();
+
+        feeReceiver = newReceiver;
+
+        emit EventsLib.FeeReceiverSet(msg.sender,newReceiver);
+    }
+    /// @dev admin register investment target
+    function registerInvestmentTarget(string memory _symbol,address _token) external onlyRole(MANAGER) { 
+        InvestmentId investmentTargetId = InvestmentId.wrap(StrategyLib.hashInvestment("HyperLiquid", _symbol));
+        if (InvestmentId.unwrap(investmentTargets[investmentTargetId].id) != 0) revert ErrorsLib.InvestmentTargetAlreadyRegistered();
+        
+        investmentTargets[investmentTargetId] = InvestmentTarget({
+            id: investmentTargetId,
+            token: _token,
+            symbol: _symbol
+        });
+
+        emit EventsLib.InvestmentTargetRegistered(msg.sender, investmentTargetId);
     }
 
-    /**
-     * @dev 授权升级函数，只有管理员角色可以调用
-     */
+    /// @dev underlying token 
+    function _underlyingToken() internal view returns (IERC20) {
+        return IERC20(underlyingAsset);
+    }
+
+    function _sender() internal view returns (address) {
+        return msg.sender;
+    }
+
+    /// @dev upgrade authorization uups
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
-
-    /**
-     * @dev Modifier to check if caller has specific role
-     */
-    // modifier onlyRole(bytes32 role) {
-    //     if (!hasRole(role, msg.sender)) revert ErrorsLib.Unauthorized();
-    //     _;
-    // }
 }

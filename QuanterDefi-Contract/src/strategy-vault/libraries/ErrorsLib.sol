@@ -29,4 +29,17 @@ library ErrorsLib {
 
     error InvalidStrategyId();
 
+    error InvalidFeeRate();
+
+    error FeeAlareadySet();
+
+    error ZeroFeeReceiver();
+
+    error FeeReceiverAlreadySet();
+
+    error InvestmentTargetAlreadyRegistered();
+    
+    error InvalidUnlockLockPeriod();
+    
+    error InsufficientContractBalance();
 }

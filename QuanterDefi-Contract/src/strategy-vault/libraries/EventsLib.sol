@@ -1,18 +1,19 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {InvestmentId} from "../interfaces/IStrategyVault.sol";
+
+
 library EventsLib { 
 
     event Deposit(
         address indexed sender,
-        uint256 indexed strategyId,
         address indexed asset,
         uint256 amount
     );
 
     event Withdraw(
         address indexed sender,
-        uint256 indexed strategyId,
         address indexed asset,
         uint256 amount
     );
@@ -26,9 +27,36 @@ library EventsLib {
 
     event UnlockSharesRequest(
         address indexed sender,
-        uint256 indexed strategyId,
+        InvestmentId indexed InvestmentTargetId,
         uint256 shares,
         uint256 timestamp
     );
 
+    event FeeRateSet(
+        address indexed sender,
+        uint256 feeRate
+    );
+
+    event InvestmentTargetRegistered(
+        address indexed sender,
+        InvestmentId indexed investmentTargetId
+    );
+    
+    event AdminWithdraw(
+        address indexed sender,
+        address indexed asset,
+        uint256 amount
+    );
+    
+    event NotEnoughSharesToUnlock(
+        address indexed user,
+        InvestmentId indexed targetId,
+        uint256 holdShares,
+        uint256 timestamp
+    );
+    
+    event FeeReceiverSet(
+        address indexed sender,
+        address indexed feeReceiver
+    );
 }
