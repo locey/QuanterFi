@@ -1,4 +1,5 @@
 require("@nomicfoundation/hardhat-toolbox");
+require("hardhat-deploy");
 require("dotenv").config();
 
 // 获取环境变量
@@ -137,5 +138,31 @@ module.exports = {
     tests: "./test",
     cache: "./cache",
     artifacts: "./artifacts",
+    deploy: "./deploy",
+    deployments: "./deployments",
+  },
+  
+  // hardhat-deploy 配置
+  namedAccounts: {
+    deployer: {
+      default: 0, // 默认使用第一个账户作为部署者
+      localhost: 0,
+      sepolia: 0,
+      mainnet: 0,
+      polygon: 0,
+      arbitrum: 0,
+    },
+    admin: {
+      default: 1, // 默认使用第二个账户作为管理员
+      localhost: 1,
+    },
+    manager: {
+      default: 2, // 默认使用第三个账户作为管理者
+      localhost: 2,
+    },
+    feeReceiver: {
+      default: 3, // 默认使用第四个账户作为手续费接收者
+      localhost: 3,
+    },
   },
 };
