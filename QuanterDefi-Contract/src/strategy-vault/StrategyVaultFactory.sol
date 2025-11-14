@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.24;
 
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import {InvestmentTarget} from "./interfaces/IStrategyVault.sol";
 import {StrategyVault} from "./StrategyVault.sol";
 
 /**
@@ -15,24 +13,37 @@ contract StrategyVaultFactory is Ownable {
     // StrategyVault实现合约地址
     address public vaultImplementation;
     
+    // unlock lock period (7 days)
+    uint256 public immutable unlockLockPeriod;
+    
     // 已创建的vault合约映射
-    mapping(address => address) public userVaults;
+    mapping(string => address) public symbolVault;
     
     // 所有vault合约列表
     address[] public allVaults;
     
-    // 策略ID计数器
-    uint256 public nextStrategyId = 1;
+    // 策略计数器
+    uint256 public nextStrategyCount = 1;
     
     // 事件定义
-    event VaultCreated(address indexed vault, address indexed owner, address asset, uint256 strategyId);
+    event VaultCreated(
+        address indexed vault, 
+        address indexed owner, 
+        address indexed asset,
+        string strategySymbol,
+        uint256 strategyCount
+    );
+    event ImplementationUpdated(address indexed oldImplementation, address indexed newImplementation);
     
     /**
      * @dev 构造函数
      * @param _vaultImplementation StrategyVault实现合约地址
+     * @param _unlockLockPeriod 解锁锁定期（秒）
      */
-    constructor(address _vaultImplementation) Ownable(msg.sender) {
+    constructor(address _vaultImplementation, uint256 _unlockLockPeriod) Ownable(msg.sender) {
+        require(_vaultImplementation != address(0), "Invalid implementation address");
         vaultImplementation = _vaultImplementation;
+        unlockLockPeriod = _unlockLockPeriod;
     }
     
     /**
@@ -42,26 +53,23 @@ contract StrategyVaultFactory is Ownable {
      * @param asset 底层资产合约地址
      * @param name Vault名称
      * @param symbol Vault代币符号
-     * @param strategyName 策略名称
-     * @param targets 投资标的数组
+     * @param strategySymbol 策略符号
      * @param endTime 策略结束时间
-     * @param performanceFeeRate 性能费率
      * @return vaultAddress 新创建的vault合约地址
      */
     function createVault(
         address admin,
         address manager,
-        IERC20 asset,
+        address asset,
         string memory name,
         string memory symbol,
-        string memory strategyName,
-        InvestmentTarget[] memory targets,
-        uint256 endTime,
-        uint256 performanceFeeRate
+        string memory strategySymbol,
+        uint256 endTime
     ) external returns (address vaultAddress) {
-        // 生成策略ID
-        uint256 strategyId = nextStrategyId;
-        nextStrategyId++;
+        require(admin != address(0), "Invalid admin address");
+        require(manager != address(0), "Invalid manager address");
+        require(asset != address(0), "Invalid asset address");
+        require(symbolVault[strategySymbol] == address(0), "Strategy symbol already exists");
         
         // 部署新的代理合约
         ERC1967Proxy proxy = new ERC1967Proxy(
@@ -70,36 +78,28 @@ contract StrategyVaultFactory is Ownable {
                 StrategyVault.initialize.selector,
                 admin,
                 manager,
-                address(asset),
                 name,
                 symbol,
-                strategyId,
-                strategyName,
-                targets,
-                endTime,
-                performanceFeeRate
+                strategySymbol,
+                asset,
+                endTime
             )
         );
         
         vaultAddress = address(proxy);
         
         // 记录用户vault
-        userVaults[msg.sender] = vaultAddress;
+        symbolVault[strategySymbol] = vaultAddress;
         
         // 添加到所有vault列表
         allVaults.push(vaultAddress);
         
-        emit VaultCreated(vaultAddress, msg.sender, address(asset), strategyId);
+        uint256 strategyCount = nextStrategyCount;
+        nextStrategyCount++;
+        
+        emit VaultCreated(vaultAddress, msg.sender, asset, strategySymbol, strategyCount);
     }
     
-    /**
-     * @dev 获取用户vault地址
-     * @param user 用户地址
-     * @return vaultAddress 用户的vault地址
-     */
-    function getUserVault(address user) external view returns (address vaultAddress) {
-        return userVaults[user];
-    }
     
     /**
      * @dev 获取所有vault地址列表
@@ -114,6 +114,17 @@ contract StrategyVaultFactory is Ownable {
      * @param _newImplementation 新的实现合约地址
      */
     function updateImplementation(address _newImplementation) external onlyOwner {
+        require(_newImplementation != address(0), "Invalid implementation address");
+        address oldImplementation = vaultImplementation;
         vaultImplementation = _newImplementation;
+        emit ImplementationUpdated(oldImplementation, _newImplementation);
+    }
+    
+    /**
+     * @dev 获取vault总数
+     * @return count vault总数
+     */
+    function getVaultCount() external view returns (uint256 count) {
+        return allVaults.length;
     }
 }

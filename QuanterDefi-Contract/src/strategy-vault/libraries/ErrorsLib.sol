@@ -42,4 +42,10 @@ library ErrorsLib {
     error InvalidUnlockLockPeriod();
     
     error InsufficientContractBalance();
+    
+    error InvalidTradeDetail();
+    
+    error UnlockRequestNotFound();
+    
+    error UnlockRequestAlreadyProcessed();
 }

@@ -1,116 +1,314 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
+const { time } = require("@nomicfoundation/hardhat-network-helpers");
 
-describe("StrategyVaultFactory", function () {
-  let strategyVaultFactory;
-  let strategyVaultImplementation; // 存储StrategyVault实现合约
-  let owner, user1, user2;
+describe("StrategyVaultFactory 完整测试", function () {
+    let factory;
+    let implementation;
+    let mockUSDC, mockUSDT;
+    let owner, admin, manager, user1;
+    let unlockLockPeriod = 7 * 24 * 60 * 60; // 7天
 
-  before(async function () {
-    [owner, user1, user2] = await ethers.getSigners();
+    beforeEach(async function () {
+        [owner, admin, manager, user1] = await ethers.getSigners();
 
-    // 部署StrategyVault实现合约（作为逻辑合约）
-    const StrategyVault = await ethers.getContractFactory("StrategyVault");
-    strategyVaultImplementation = await StrategyVault.deploy();
-    await strategyVaultImplementation.waitForDeployment();
-    
-    console.log("StrategyVault Implementation deployed at:", await strategyVaultImplementation.getAddress());
+        // 部署 Mock 代币
+        const MockUSDC = await ethers.getContractFactory("MockUSDC");
+        mockUSDC = await MockUSDC.deploy();
+        await mockUSDC.waitForDeployment();
 
-    // 使用StrategyVault实现合约地址部署工厂合约
-    const StrategyVaultFactory = await ethers.getContractFactory("StrategyVaultFactory");
-    strategyVaultFactory = await StrategyVaultFactory.deploy(await strategyVaultImplementation.getAddress());
-    await strategyVaultFactory.waitForDeployment();
-  });
+        mockUSDT = await MockUSDC.deploy();
+        await mockUSDT.waitForDeployment();
 
-  describe("Deployment", function () {
-    it("Should deploy factory successfully", async function () {
-      expect(await strategyVaultFactory.getAddress()).to.not.be.null;
-      console.log("Factory deployed at:", await strategyVaultFactory.getAddress());
+        // 部署 StrategyVault 实现合约
+        const StrategyVault = await ethers.getContractFactory("StrategyVault");
+        implementation = await StrategyVault.deploy(unlockLockPeriod);
+        await implementation.waitForDeployment();
+
+        // 部署 Factory 合约
+        const StrategyVaultFactory = await ethers.getContractFactory("StrategyVaultFactory");
+        factory = await StrategyVaultFactory.deploy(
+            await implementation.getAddress(),
+            unlockLockPeriod
+        );
+        await factory.waitForDeployment();
     });
 
-    it("Should store the correct implementation address", async function () {
-      const storedImpl = await strategyVaultFactory.vaultImplementation();
-      expect(storedImpl).to.equal(await strategyVaultImplementation.getAddress());
-      console.log("Stored implementation address:", storedImpl);
-    });
-  });
+    describe("Factory 初始化测试", function () {
+        it("应该正确初始化 Factory", async function () {
+            expect(await factory.vaultImplementation()).to.equal(await implementation.getAddress());
+            expect(await factory.unlockLockPeriod()).to.equal(unlockLockPeriod);
+            expect(await factory.owner()).to.equal(owner.address);
+        });
 
-  describe("Basic Functionality", function () {
-    it("Should have correct initial state", async function () {
-      // 验证初始策略ID
-      const nextStrategyId = await strategyVaultFactory.nextStrategyId();
-      expect(nextStrategyId).to.equal(1);
-      
-      console.log("Factory has correct initial state, nextStrategyId:", nextStrategyId.toString());
-    });
-
-    it("Should allow owner to update implementation", async function () {
-      // 更新实现地址
-      const newImplAddress = "0x1111111111111111111111111111111111111111";
-      const tx = await strategyVaultFactory.connect(owner).updateImplementation(newImplAddress);
-      await tx.wait();
-      
-      // 验证更新
-      const updatedImpl = await strategyVaultFactory.vaultImplementation();
-      expect(updatedImpl).to.equal(newImplAddress);
-      
-      console.log("Implementation updated successfully to:", updatedImpl);
+        it("应该拒绝零地址的实现合约", async function () {
+            const StrategyVaultFactory = await ethers.getContractFactory("StrategyVaultFactory");
+            await expect(
+                StrategyVaultFactory.deploy(ethers.ZeroAddress, unlockLockPeriod)
+            ).to.be.revertedWith("Invalid implementation address");
+        });
     });
 
-    it("Should fail when non-owner tries to update implementation", async function () {
-      const newImplAddress = "0x2222222222222222222222222222222222222222";
-      await expect(strategyVaultFactory.connect(user1).updateImplementation(newImplAddress))
-        .to.be.reverted; // 移除具体的错误信息检查
+    describe("创建 Vault 测试", function () {
+        it("应该成功创建第一个 Vault", async function () {
+            const endTime = (await time.latest()) + 365 * 24 * 60 * 60;
+
+            const tx = await factory.createVault(
+                admin.address,
+                manager.address,
+                await mockUSDC.getAddress(),
+                "Quanter ETH Strategy",
+                "QES",
+                "ETH-PERP-V1",
+                endTime
+            );
+
+            const receipt = await tx.wait();
+            const event = receipt.logs.find(log => {
+                try {
+                    return factory.interface.parseLog(log).name === "VaultCreated";
+                } catch (e) {
+                    return false;
+                }
+            });
+
+            expect(event).to.not.be.undefined;
+            
+            const vaultAddress = await factory.symbolVault("ETH-PERP-V1");
+            expect(vaultAddress).to.not.equal(ethers.ZeroAddress);
+
+            const allVaults = await factory.getAllVaults();
+            expect(allVaults.length).to.equal(1);
+            expect(await factory.getVaultCount()).to.equal(1);
+        });
+
+        it("应该成功创建多个不同策略的 Vault", async function () {
+            const endTime = (await time.latest()) + 365 * 24 * 60 * 60;
+
+            // 创建第一个策略
+            await factory.createVault(
+                admin.address,
+                manager.address,
+                await mockUSDC.getAddress(),
+                "Quanter ETH Strategy",
+                "QES",
+                "ETH-PERP-V1",
+                endTime
+            );
+
+            // 创建第二个策略
+            await factory.createVault(
+                admin.address,
+                manager.address,
+                await mockUSDC.getAddress(),
+                "Quanter BTC Strategy",
+                "QBS",
+                "BTC-PERP-V1",
+                endTime
+            );
+
+            // 创建第三个策略（使用不同的代币）
+            await factory.createVault(
+                admin.address,
+                manager.address,
+                await mockUSDT.getAddress(),
+                "Quanter SOL Strategy",
+                "QSS",
+                "SOL-PERP-V1",
+                endTime
+            );
+
+            expect(await factory.getVaultCount()).to.equal(3);
+
+            const vault1 = await factory.symbolVault("ETH-PERP-V1");
+            const vault2 = await factory.symbolVault("BTC-PERP-V1");
+            const vault3 = await factory.symbolVault("SOL-PERP-V1");
+
+            expect(vault1).to.not.equal(ethers.ZeroAddress);
+            expect(vault2).to.not.equal(ethers.ZeroAddress);
+            expect(vault3).to.not.equal(ethers.ZeroAddress);
+            expect(vault1).to.not.equal(vault2);
+            expect(vault2).to.not.equal(vault3);
+        });
+
+        it("应该拒绝创建同名策略的 Vault", async function () {
+            const endTime = (await time.latest()) + 365 * 24 * 60 * 60;
+
+            await factory.createVault(
+                admin.address,
+                manager.address,
+                await mockUSDC.getAddress(),
+                "Quanter ETH Strategy",
+                "QES",
+                "ETH-PERP-V1",
+                endTime
+            );
+
+            await expect(
+                factory.createVault(
+                    admin.address,
+                    manager.address,
+                    await mockUSDC.getAddress(),
+                    "Another ETH Strategy",
+                    "AES",
+                    "ETH-PERP-V1", // 同名
+                    endTime
+                )
+            ).to.be.revertedWith("Strategy symbol already exists");
+        });
+
+        it("应该拒绝无效的参数", async function () {
+            const endTime = (await time.latest()) + 365 * 24 * 60 * 60;
+
+            // 零地址 admin
+            await expect(
+                factory.createVault(
+                    ethers.ZeroAddress,
+                    manager.address,
+                    await mockUSDC.getAddress(),
+                    "Test",
+                    "TST",
+                    "TEST-V1",
+                    endTime
+                )
+            ).to.be.revertedWith("Invalid admin address");
+
+            // 零地址 manager
+            await expect(
+                factory.createVault(
+                    admin.address,
+                    ethers.ZeroAddress,
+                    await mockUSDC.getAddress(),
+                    "Test",
+                    "TST",
+                    "TEST-V1",
+                    endTime
+                )
+            ).to.be.revertedWith("Invalid manager address");
+
+            // 零地址 asset
+            await expect(
+                factory.createVault(
+                    admin.address,
+                    manager.address,
+                    ethers.ZeroAddress,
+                    "Test",
+                    "TST",
+                    "TEST-V1",
+                    endTime
+                )
+            ).to.be.revertedWith("Invalid asset address");
+        });
     });
-    
-    // 测试创建vault实例的功能
-    it("Should create a new vault instance", async function () {
-      // 恢复原始实现地址
-      const originalImplAddress = await strategyVaultImplementation.getAddress();
-      await strategyVaultFactory.connect(owner).updateImplementation(originalImplAddress);
-      
-      // 准备创建vault的参数
-      const targets = [0, 1]; // BTC, ETH
-      const endTime = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60; // 30天后
-      
-      // 创建vault
-      const tx = await strategyVaultFactory.connect(user1).createVault(
-        user1.address,    // admin
-        user1.address,    // manager
-        "0x0000000000000000000000000000000000000000", // 使用零地址作为测试资产地址
-        "Test Vault",
-        "TVLT",
-        "Test Strategy",
-        targets,
-        endTime,
-        1000 // 10% performance fee
-      );
-      
-      const receipt = await tx.wait();
-      
-      // 验证事件被触发
-      const event = receipt.logs.find(log => log.fragment && log.fragment.name === "VaultCreated");
-      expect(event).to.not.be.undefined;
-      
-      // 验证vault被创建
-      const userVaultAddress = await strategyVaultFactory.getUserVault(user1.address);
-      expect(userVaultAddress).to.not.equal(ethers.ZeroAddress);
-      
-      console.log("Vault created successfully at:", userVaultAddress);
-      
-      // 验证创建的vault可以正常工作
-      try {
-        // 尝试与创建的vault交互
-        const VaultContract = await ethers.getContractFactory("StrategyVault");
-        const vault = VaultContract.attach(userVaultAddress);
-        
-        // 获取策略信息
-        const strategyInfo = await vault.getStrategyInfo();
-        console.log("Strategy info retrieved successfully");
-        console.log("Strategy name:", strategyInfo.name);
-      } catch (error) {
-        console.error("Error interacting with created vault:", error.message);
-      }
+
+    describe("创建的 Vault 功能验证", function () {
+        let vaultAddress;
+        let vault;
+
+        beforeEach(async function () {
+            const endTime = (await time.latest()) + 365 * 24 * 60 * 60;
+
+            await factory.createVault(
+                admin.address,
+                manager.address,
+                await mockUSDC.getAddress(),
+                "Quanter ETH Strategy",
+                "QES",
+                "ETH-PERP-V1",
+                endTime
+            );
+
+            vaultAddress = await factory.symbolVault("ETH-PERP-V1");
+            vault = await ethers.getContractAt("StrategyVault", vaultAddress);
+        });
+
+        it("创建的 Vault 应该有正确的配置", async function () {
+            expect(await vault.underlyingAsset()).to.equal(await mockUSDC.getAddress());
+            expect(await vault.strategySymbol()).to.equal("ETH-PERP-V1");
+            expect(await vault.name()).to.equal("Quanter ETH Strategy");
+            expect(await vault.symbol()).to.equal("QES");
+        });
+
+        it("创建的 Vault 应该有正确的角色设置", async function () {
+            const DEFAULT_ADMIN_ROLE = await vault.DEFAULT_ADMIN_ROLE();
+            const MANAGER = await vault.MANAGER();
+
+            expect(await vault.hasRole(DEFAULT_ADMIN_ROLE, admin.address)).to.be.true;
+            expect(await vault.hasRole(MANAGER, manager.address)).to.be.true;
+        });
+
+        it("创建的 Vault 应该能正常使用", async function () {
+            // 给用户铸造代币
+            await mockUSDC.mint(user1.address, ethers.parseUnits("1000", 6));
+
+            // 用户存款
+            await mockUSDC.connect(user1).approve(vaultAddress, ethers.parseUnits("1000", 6));
+            await vault.connect(user1).deposit(ethers.parseUnits("1000", 6));
+
+            const userAsset = await vault.userAssets(user1.address);
+            expect(userAsset.totalAmount).to.equal(ethers.parseUnits("1000", 6));
+        });
     });
-  });
+
+    describe("更新实现合约测试", function () {
+        it("Owner 应该能更新实现合约", async function () {
+            const StrategyVault = await ethers.getContractFactory("StrategyVault");
+            const newImplementation = await StrategyVault.deploy(unlockLockPeriod);
+            await newImplementation.waitForDeployment();
+
+            await factory.updateImplementation(await newImplementation.getAddress());
+
+            expect(await factory.vaultImplementation()).to.equal(await newImplementation.getAddress());
+        });
+
+        it("非 Owner 不应该能更新实现合约", async function () {
+            const StrategyVault = await ethers.getContractFactory("StrategyVault");
+            const newImplementation = await StrategyVault.deploy(unlockLockPeriod);
+            await newImplementation.waitForDeployment();
+
+            await expect(
+                factory.connect(user1).updateImplementation(await newImplementation.getAddress())
+            ).to.be.reverted;
+        });
+
+        it("应该拒绝零地址的新实现合约", async function () {
+            await expect(
+                factory.updateImplementation(ethers.ZeroAddress)
+            ).to.be.revertedWith("Invalid implementation address");
+        });
+    });
+
+    describe("批量创建 Vault 测试", function () {
+        it("应该能够批量创建多个 Vault", async function () {
+            const endTime = (await time.latest()) + 365 * 24 * 60 * 60;
+            const strategies = [
+                { name: "ETH Long", symbol: "ETH-LONG", strategySymbol: "ETH-PERP-LONG" },
+                { name: "BTC Long", symbol: "BTC-LONG", strategySymbol: "BTC-PERP-LONG" },
+                { name: "SOL Long", symbol: "SOL-LONG", strategySymbol: "SOL-PERP-LONG" },
+                { name: "AVAX Long", symbol: "AVAX-LONG", strategySymbol: "AVAX-PERP-LONG" },
+                { name: "MATIC Long", symbol: "MATIC-LONG", strategySymbol: "MATIC-PERP-LONG" },
+            ];
+
+            for (const strategy of strategies) {
+                await factory.createVault(
+                    admin.address,
+                    manager.address,
+                    await mockUSDC.getAddress(),
+                    strategy.name,
+                    strategy.symbol,
+                    strategy.strategySymbol,
+                    endTime
+                );
+            }
+
+            expect(await factory.getVaultCount()).to.equal(5);
+
+            const allVaults = await factory.getAllVaults();
+            expect(allVaults.length).to.equal(5);
+
+            // 验证每个 vault 都不同
+            const uniqueAddresses = new Set(allVaults);
+            expect(uniqueAddresses.size).to.equal(5);
+        });
+    });
 });

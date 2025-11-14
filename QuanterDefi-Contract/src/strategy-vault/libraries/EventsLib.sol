@@ -59,4 +59,29 @@ library EventsLib {
         address indexed sender,
         address indexed feeReceiver
     );
+    
+    event UserPositionUpdated(
+        address indexed user,
+        InvestmentId indexed targetId,
+        uint256 totalShares,
+        uint256 entryPrice,
+        uint256 timestamp
+    );
+    
+    event TradeProcessed(
+        address indexed user,
+        InvestmentId indexed targetId,
+        uint256 unlockRequestId,
+        int256 profit,
+        uint256 fee,
+        uint256 timestamp
+    );
+    
+    event UnlockRequestProcessed(
+        uint256 indexed requestId,
+        address indexed user,
+        InvestmentId indexed targetId,
+        uint256 shares,
+        uint256 timestamp
+    );
 }

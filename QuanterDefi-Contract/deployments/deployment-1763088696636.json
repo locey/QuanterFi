@@ -1,0 +1,40 @@
+{
+  "network": "localhost",
+  "chainId": "31337",
+  "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+  "timestamp": "2025-11-14T02:51:36.636Z",
+  "contracts": {
+    "mockUSDC": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+    "strategyVaultImplementation": "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512",
+    "strategyVaultFactory": "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"
+  },
+  "vaults": [
+    {
+      "name": "Quanter ETH Long Strategy",
+      "symbol": "QES-ETH-LONG",
+      "strategySymbol": "ETH-PERP-LONG",
+      "description": "以太坊永续合约做多策略",
+      "address": "0x75537828f2ce51be7289709686A69CbFDbB714F1"
+    },
+    {
+      "name": "Quanter BTC Long Strategy",
+      "symbol": "QES-BTC-LONG",
+      "strategySymbol": "BTC-PERP-LONG",
+      "description": "比特币永续合约做多策略",
+      "address": "0xE451980132E65465d0a498c53f0b5227326Dd73F"
+    },
+    {
+      "name": "Quanter SOL Long Strategy",
+      "symbol": "QES-SOL-LONG",
+      "strategySymbol": "SOL-PERP-LONG",
+      "description": "Solana永续合约做多策略",
+      "address": "0x5392A33F7F677f59e833FEBF4016cDDD88fF9E67"
+    }
+  ],
+  "config": {
+    "unlockLockPeriod": 604800,
+    "endTime": 1794624696,
+    "admin": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+    "manager": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+  }
+}
